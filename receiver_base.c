@@ -25,7 +25,7 @@ const recv_descriptor_t grid_5_8_base_desc = {
     .total_ch     = 96,
     .ch_per_band  = 8,
     .band_names   = lit_5_8_base,
-    .grid_name    = "5.8G Base (96CH)"
+    .channel_names    = NULL
 };
 
 // ============================================================================
@@ -47,7 +47,7 @@ const recv_descriptor_t grid_3_3_ext_desc = {
     .total_ch     = 56,
     .ch_per_band  = 8,
     .band_names   = lit_3_3_ext,
-    .grid_name    = "3.3G Extended (56CH)"
+    .channel_names    = NULL,
 };
 
 // ============================================================================
@@ -93,8 +93,69 @@ const recv_descriptor_t grid_5_8_ext_desc = {
     .total_ch     = 120,
     .ch_per_band  = 8,
     .band_names   = lit_5_8_ext,
-    .grid_name    = "5.8G Extended (120CH)"
+    .channel_names    = NULL
 };
+
+receiver_profile_t cfg_sub = {
+    .p_desc = (recv_descriptor_t*)&grid_1_2_desc,
+    .min_freq = 800,
+    .max_freq = 1700,
+    .auto_step_freq = 10,
+    .manual_step_freq = 10,
+    .scan_time_sec = 5,
+    .freq_ch_mode = RECV_MODE_CHANNEL
+};
+
+//receiver_profile_t prof_5_8_full = 		{ .p_grid = &grid_5_8_ext_desc };
+//receiver_profile_t prof_1_2_default = 	{ .p_grid = &grid_1_2_desc };
+
+/**
+ * @brief Низкоуровневая функция захвата АЦП и анализа.
+ * Вызывается изнутри process_state приёмника, когда тот готов к измерению.
+ */
+void receiver_dsp_perform_scan(receiver_base_t *ctx) {
+    receiver_dsp_t *p_dsp = &ctx->dsp;
+    float accum_mag = 0;
+    float accum_noise = 0;
+
+    // 1. Захватываем мьютекс АЦП (общий ресурс для всех воркеров)
+    if (osMutexAcquire(ctx->adc_manager->mutex, osWaitForever) != osOK) return;
+
+    // 2. Переключаем аналоговый ключ под мьютексом (атомарно)
+    gpio_set_sun(&p_dsp->sw_pin, p_dsp->sw_state);
+
+    // Короткая пауза (Settling time) для переходных процессов ключа
+//    __asm volatile("nop; nop; nop; nop;");
+
+    // 3. Цикл накопления результатов
+    for (uint16_t i = 0; i < p_dsp->n_repeats; i++) {
+
+        // Инвалидируем кэш перед работой DMA
+        L1C_CleanInvalidateDCache_by_Addr((void *)p_dsp->adc_buffer, sizeof(p_dsp->adc_buffer));
+
+        // Запуск аппаратного захвата (DMA + GPADC)
+        // dma_capture_start(p_dsp->adc_buffer, p_dsp->n_samples);
+
+        // Ждем сигнал завершения передачи от ISR DMA
+//        uint32_t flags = osEventFlagsWait(ctx->evt_id, SIG_DMA_COMPLETE, osFlagsWaitAny, 100);
+//        if (flags & osFlagsError) break;
+
+        // Инвалидируем кэш после DMA, чтобы CPU читал данные из DDR
+        L1C_InvalidateDCache_by_Addr((void *)p_dsp->adc_buffer, sizeof(p_dsp->adc_buffer));
+
+        // Математика (Гёрцель)
+        // float mag = goertzel_mag(p_dsp->adc_buffer, p_dsp->n_samples, p_dsp->target_bin);
+        // accum_mag += mag;
+        // ... (расчет шума и т.д.)
+    }
+
+    // 4. Финализация результатов в структуру воркера
+    // p_dsp->last_mag = accum_mag / p_dsp->n_repeats;
+    // p_dsp->is_video_found = ...
+
+    // 5. Освобождаем ресурс для другого приёмника
+    osMutexRelease(ctx->adc_manager->mutex);
+}
 
 void receiver_base_get_current_name(receiver_base_t *base, char *out_str) {
     recv_descriptor_t *d = base->p_cfg->p_desc;
@@ -184,11 +245,11 @@ static uint16_t receiver_get_next_idx_universal(receiver_base_t *base,
  * @brief Универсальный тикающий автомат приёмника (The Brain)
  * Вызывается диспетчером каждые X миллисекунд.
  */
-void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
-    receiver_base_t *base = (receiver_base_t *)dev_ptr;
-
-    // Родительский воркер нужен нам только для доступа к модулю DSP (АЦП)
-    receiver_worker_ctx_t *worker = (receiver_worker_ctx_t *)base->parent_worker_ctx;
+void receiver_process_state(receiver_base_t* base, uint32_t delta_ms) {
+//
+//
+//    // Родительский воркер нужен нам только для доступа к модулю DSP (АЦП)
+//    receiver_worker_ctx_t *worker = (receiver_worker_ctx_t *)base->parent_worker_ctx;
 
     // 1. Накапливаем прошедшее время
     base->state_timer_ms += delta_ms;
@@ -214,15 +275,10 @@ void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
             
             // Если физический драйвер железа подключен
             if (base->hw_set_freq) {
-                // Пытаемся безопасно захватить шину (если она разделяемая)
                 if (base->bus_mutex != NULL) {
                     osMutexAcquire(base->bus_mutex, osWaitForever);
                 }
-
-                // Передаем команду конкретному чипу (RTC6715, 1.2G и т.д.)
                 base->hw_set_freq(base->hw_dev_ptr, target_freq);
-
-                // Освобождаем шину для других устройств
                 if (base->bus_mutex != NULL) {
                     osMutexRelease(base->bus_mutex);
                 }
@@ -243,7 +299,7 @@ void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
 
                 // Железо готово. Запускаем "тяжелую" функцию захвата АЦП и анализа Гёрцелем.
                 // Эта функция синхронная (ждет DMA), поэтому мы отдаем ей управление.
-                receiver_dsp_perform_scan(worker);
+                receiver_dsp_perform_scan(base);
 
                 // Анализ завершен, переходим к принятию решения
                 base->state = RECV_STATE_DSP_SCAN;
@@ -254,7 +310,7 @@ void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
         // СОСТОЯНИЕ 3: Проверка результатов DSP
         // ==========================================
         case RECV_STATE_DSP_SCAN:
-			if (worker->dsp.is_video_found) {
+			if (base->dsp.is_video_found) {
 				base->state = RECV_STATE_LOCKED;
 			} else {
 				// ВИДЕО НЕТ. Что делаем?
@@ -276,9 +332,9 @@ void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
             // Периодически (например, раз в секунду) проверяем, не пропал ли сигнал
             if (base->state_timer_ms >= 1000) {
 
-                receiver_dsp_perform_scan(worker);
+                receiver_dsp_perform_scan(base);
 
-                if (!worker->dsp.is_video_found) {
+                if (!base->dsp.is_video_found) {
                     // Сигнал потерян! Сбрасываем таймер и запускаем поиск заново.
                     base->state_timer_ms = 0;
                     base->state = RECV_STATE_TUNE;
@@ -295,8 +351,7 @@ void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
             break;
     }
 }
-void receiver_base_handle_cmd(void* dev_ptr, void* msg_ptr) {
-receiver_base_t *base = (receiver_base_t *)dev_ptr;
+void receiver_base_cmd(receiver_base_t* base, void* msg_ptr) {
 
     cntrl_dev_sys_msg_que_type_s *msg;
     msg = (cntrl_dev_sys_msg_que_type_s *)msg_ptr;

@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include "cmsis_os2.h"
 #include "comm.h"
-#include "receiver_worker.h"
+#include "gpio_sun.h"
 // Подключаем твою структуру команд
 // #include "control.h"
 
@@ -76,12 +76,45 @@ typedef struct {
 } recv_descriptor_t;
 
 
+#define MAX_DSP_SAMPLES     1024
+
+/* 1. Менеджер общего физического ресурса АЦП */
+typedef struct {
+    osMutexId_t mutex;
+    bool        is_initialized;
+} gpadc_manager_t;
+
+/* 2. DSP Анализатор — инкапсулирован в структуру воркера (Матрешка) */
+typedef struct {
+    // Настройки анализа
+    uint16_t n_samples;      // Размер выборки (N)
+    uint16_t n_repeats;      // Количество усреднений (n)
+    uint16_t target_bin;     // Целевая частота (15.6 кГц)
+    float    threshold_mag;  // Порог магнитуды
+    float    threshold_snr;  // Порог сигнал/шум
+
+    // Параметры аналогового ключа (FSA3157)
+    struct gpio_t_ sw_pin;   // Пин управления (порт, пин)
+    uint8_t        sw_state; // Состояние (0 или 1) для подключения ЭТОГО тюнера
+
+    // Результаты последнего измерения
+    float    last_mag;
+    float    last_snr;
+    bool     is_video_found;
+
+    // Буфер АЦП — выровнен по 64 байта для корректной работы кэша T113-S3
+//    __attribute__((aligned(64)))
+//#pragma data_alignment=64
+    uint16_t adc_buffer[MAX_DSP_SAMPLES];
+} receiver_dsp_t;
+
+
 // Общая конфигурация (Профиль) — один на диапазон (например, на все 5.8G)
 typedef struct {
 	recv_descriptor_t* p_desc;
 //    const uint16_t *freq_table;  // <--- Сетка частот живет здесь!
-    uint16_t total_ch;           // <--- Размер сетки
-    uint32_t allowed_mask[8];    // <--- Маска разрешенных каналов
+//    uint16_t total_ch;           // <--- Размер сетки
+//    uint32_t allowed_mask[8];    // <--- Маска разрешенных каналов
 
     uint16_t min_freq;
     uint16_t max_freq;
@@ -91,9 +124,11 @@ typedef struct {
     recv_freq_ch_mode_e freq_ch_mode;
 } receiver_profile_t;
 
+
+
 // Базовый класс (Инстанс)
-typedef struct receiver_base_s {
-    void* parent_worker_ctx;    // Воркер нужен ТОЛЬКО чтобы дергать DSP
+typedef struct {
+//    void* parent_worker_ctx;    // Воркер нужен ТОЛЬКО чтобы дергать DSP
     osMutexId_t bus_mutex;
     
     uint32_t pll_lock_time_ms;
@@ -111,9 +146,13 @@ typedef struct receiver_base_s {
 
     receiver_work_mode_e work_mode; // Текущий активный режим
 
+    gpadc_manager_t* adc_manager;    // Ссылка на общего хозяина АЦП
+    receiver_dsp_t      dsp;            // Встроенный блок анализа
+
 } receiver_base_t;
 // Глобальные функции
-void receiver_process_state(void* dev_ptr, uint32_t delta_ms);
-void receiver_base_handle_cmd(void* dev_ptr, void* msg_ptr); // <--- Разбор команд
+void receiver_process_state(receiver_base_t* dev_ptr, uint32_t delta_ms);
+void receiver_base_cmd(receiver_base_t* dev_ptr, void* msg_ptr); // <--- Разбор команд
+void receiver_dsp_perform_scan(receiver_base_t *ctx);
 
 #endif // RECEIVER_BASE_H
