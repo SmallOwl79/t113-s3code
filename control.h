@@ -32,7 +32,9 @@
 #include "povorot.h"
 #endif
 
-#include "devconfig.h"
+#include "dev_config.h"
+
+#include "receiver_worker.h"
 
 #define UDP_SENDER			1
 //#define MAX_NUM_FUNC_TABLE								7
@@ -353,6 +355,9 @@ osEventFlagsId_t 		main_ctrl_thread_ev;
 #ifdef	POVOROT
 	povorot_struct	povorot;
 #endif
+
+	receiver_worker_ctx_t 	receiver_0;
+	receiver_worker_ctx_t 	receiver_1;
 
 	struct sunxi_i2c 			*p_hi2c_tvp;
 	struct sunxi_i2c 			*p_hi2c_1_2;

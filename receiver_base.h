@@ -115,5 +115,9 @@ typedef struct receiver_base_s {
 // Глобальные функции
 void receiver_process_state(void* dev_ptr, uint32_t delta_ms);
 void receiver_base_handle_cmd(void* dev_ptr, void* msg_ptr); // <--- Разбор команд
+void receiver_base_get_current_name(receiver_base_t *base, char *out_str);
+
+// Функция навигации (нужна для receiver_cmd.c)
+uint16_t receiver_get_next_idx_universal(receiver_base_t *base, uint16_t step_size, nav_dir_e dir, nav_scope_e scope);
 
 #endif // RECEIVER_BASE_H

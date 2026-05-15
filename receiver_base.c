@@ -1,5 +1,6 @@
 #include "receiver_base.h"
 #include "receiver_worker.h"
+#include "receiver_cmd.h"
 
 // ============================================================================
 // ВАРИАНТ 1: RECV_5_8_BASE_CH (96 каналов, 12 литер)
@@ -123,7 +124,7 @@ void receiver_base_get_current_name(receiver_base_t *base, char *out_str) {
     }
 }
 
-static uint16_t receiver_get_next_idx_universal(receiver_base_t *base,
+uint16_t receiver_get_next_idx_universal(receiver_base_t *base,
                                                uint16_t step_size,
                                                nav_dir_e dir,
                                                nav_scope_e scope)
@@ -293,64 +294,5 @@ void receiver_process_state(void* dev_ptr, uint32_t delta_ms) {
             // Защита автомата от неверного состояния
             base->state = RECV_STATE_TUNE;
             break;
-    }
-}
-void receiver_base_handle_cmd(void* dev_ptr, void* msg_ptr) {
-receiver_base_t *base = (receiver_base_t *)dev_ptr;
-
-    cntrl_dev_sys_msg_que_type_s *msg;
-    msg = (cntrl_dev_sys_msg_que_type_s *)msg_ptr;
-
-    switch (msg->cmd) {
-    // --- ГЛОБАЛЬНАЯ НАВИГАЦИЯ ---
-            case receiver_cntrl_cmd_ch_up:
-                base->work_mode = RECV_MODE_MANUAL;
-                base->current_ch_idx = receiver_get_next_idx_universal(base, 1, NAV_DIR_UP, NAV_SCOPE_GLOBAL);
-                base->state = RECV_STATE_TUNE;
-                break;
-
-            case receiver_cntrl_cmd_ch_dn:
-                base->work_mode = RECV_MODE_MANUAL;
-                base->current_ch_idx = receiver_get_next_idx_universal(base, 1, NAV_DIR_DN, NAV_SCOPE_GLOBAL);
-                base->state = RECV_STATE_TUNE;
-                break;
-
-            // --- НАВИГАЦИЯ ПО ЛИТЕРАМ (Bands) ---
-            case receiver_cntrl_cmd_lit_up:
-                base->work_mode = RECV_MODE_MANUAL;
-                base->current_ch_idx = receiver_get_next_idx_universal(base, base->p_cfg->p_desc->ch_per_band, NAV_DIR_UP, NAV_SCOPE_GLOBAL);
-                base->state = RECV_STATE_TUNE;
-                break;
-
-            case receiver_cntrl_cmd_lit_dn:
-                base->work_mode = RECV_MODE_MANUAL;
-                base->current_ch_idx = receiver_get_next_idx_universal(base, base->p_cfg->p_desc->ch_per_band, NAV_DIR_DN, NAV_SCOPE_GLOBAL);
-                base->state = RECV_STATE_TUNE;
-                break;
-
-            // --- УПРАВЛЕНИЕ РЕЖИМАМИ ---
-            case receiver_cntrl_cmd_mode_auto_scan:
-                base->work_mode = RECV_MODE_AUTO_SCAN;
-                if (base->state == RECV_STATE_LOCKED) base->state = RECV_STATE_TUNE;
-                break;
-
-            case receiver_cntrl_cmd_mode_manual:
-                base->work_mode = RECV_MODE_MANUAL;
-                break;
-
-//            // --- УСТАНОВКА ЗНАЧЕНИЙ ---
-//            case receiver_cntrl_cmd_set_freq:
-//                base->work_mode = RECV_MODE_MANUAL;
-//                base->current_freq = msg->uint16_val; // MHz
-//                base->p_cfg->freq_ch_mode = RECV_MODE_FREQ;
-//                base->state = RECV_STATE_TUNE;
-//                break;
-//
-//            case main_cntrl_cmd_set_chanel:
-//                base->work_mode = RECV_MODE_MANUAL;
-//                base->current_ch_idx = msg->uint16_val; // Index
-//                base->p_cfg->freq_ch_mode = RECV_MODE_CHANNEL;
-//                base->state = RECV_STATE_TUNE;
-//                break;
     }
 }
