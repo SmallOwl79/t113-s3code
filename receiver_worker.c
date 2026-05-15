@@ -33,9 +33,10 @@ void receiver_worker_task(void *argument) {
             if (event & SIG_REC_NEW_CMD) {
                 // Выгребаем все команды из очереди
                 while (osMessageQueueGet(ctx->q_id, &msg_ptr, NULL, 0) == osOK) {
-                    if (ctx->handle_cmd) {
-                        ctx->handle_cmd(ctx->p_dev_data, msg_ptr);
-                    }
+                	receiver_base_cmd(&ctx->base, msg_ptr);
+//                    if (ctx->handle_cmd) {
+//                        ctx->handle_cmd(ctx->p_dev_data, msg_ptr);
+//                    }
                 }
             }
 
@@ -43,59 +44,42 @@ void receiver_worker_task(void *argument) {
             if (event & SIG_REC_TIMER_DONE) {
                 // Просто передаем управление приёмнику и говорим, сколько времени прошло.
                 // Приёмник сам решит: пора ли переключать PLL или пора звать DSP.
-                if (ctx->process_state) {
-                    ctx->process_state(ctx->p_dev_data, ctx->scan_step_ms);
-                }
+//                if (ctx->process_state) {
+//                    ctx->process_state(ctx->p_dev_data, ctx->scan_step_ms);
+//                }
+            	receiver_process_state(&ctx->base, ctx->scan_step_ms);
             }
         }
     }
 }
-
-/**
- * @brief Низкоуровневая функция захвата АЦП и анализа.
- * Вызывается изнутри process_state приёмника, когда тот готов к измерению.
- */
-void receiver_dsp_perform_scan(receiver_worker_ctx_t *ctx) {
-    receiver_dsp_t *p_dsp = &ctx->dsp;
-    float accum_mag = 0;
-    float accum_noise = 0;
-
-    // 1. Захватываем мьютекс АЦП (общий ресурс для всех воркеров)
-    if (osMutexAcquire(ctx->adc_manager->mutex, osWaitForever) != osOK) return;
-
-    // 2. Переключаем аналоговый ключ под мьютексом (атомарно)
-    gpio_set_sun(&p_dsp->sw_pin, p_dsp->sw_state);
-
-    // Короткая пауза (Settling time) для переходных процессов ключа
-//    __asm volatile("nop; nop; nop; nop;");
-
-    // 3. Цикл накопления результатов
-    for (uint16_t i = 0; i < p_dsp->n_repeats; i++) {
-
-        // Инвалидируем кэш перед работой DMA
-        L1C_CleanInvalidateDCache_by_Addr((void *)p_dsp->adc_buffer, sizeof(p_dsp->adc_buffer));
-
-        // Запуск аппаратного захвата (DMA + GPADC)
-        // dma_capture_start(p_dsp->adc_buffer, p_dsp->n_samples);
-
-        // Ждем сигнал завершения передачи от ISR DMA
-        uint32_t flags = osEventFlagsWait(ctx->evt_id, SIG_DMA_COMPLETE, osFlagsWaitAny, 100);
-        if (flags & osFlagsError) break;
-
-        // Инвалидируем кэш после DMA, чтобы CPU читал данные из DDR
-        L1C_InvalidateDCache_by_Addr((void *)p_dsp->adc_buffer, sizeof(p_dsp->adc_buffer));
-
-        // Математика (Гёрцель)
-        // float mag = goertzel_mag(p_dsp->adc_buffer, p_dsp->n_samples, p_dsp->target_bin);
-        // accum_mag += mag;
-        // ... (расчет шума и т.д.)
-    }
-
-    // 4. Финализация результатов в структуру воркера
-    // p_dsp->last_mag = accum_mag / p_dsp->n_repeats;
-    // p_dsp->is_video_found = ...
-
-    // 5. Освобождаем ресурс для другого приёмника
-    osMutexRelease(ctx->adc_manager->mutex);
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+static uint32_t receiver_worker_make_ctrl_cmd(receiver_worker_ctx_t *p_ctl,uint8_t cmd, uint8_t len, uint8_t *p_data){
+cntrl_dev_sys_msg_que_type_s* p_buf;
+cntrl_dev_sys_msg_que_type_s buf;
+uint32_t res=0;
+	p_buf = &buf;
+	p_buf->cmd = cmd;
+	p_buf->have_ack = dev_cntrl_ack_not_response;
+	p_buf->time = 0;//osKernelGetTickCount();
+	if(len){
+		memcpy(&p_buf->buf[0],p_data,len);
+	}
+	if (osMessageQueuePut(p_ctl->q_id,p_buf,0, 1000) != osOK){
+		res = 2;
+	}
+	else{
+		osEventFlagsSet(p_ctl->evt_id,SIG_REC_NEW_CMD);
+	}
+	return res;
 }
-
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void receiver_worker_make_ctrl_cmd_32(uint32_t ctl32, uint32_t tmp0, uint32_t cmd, uint8_t* p8_data){
+	receiver_worker_ctx_t *p_ctl;
+	p_ctl = (receiver_worker_ctx_t *)ctl32;
+	receiver_worker_make_ctrl_cmd(p_ctl,cmd,tmp0,p8_data);
+	return;
+}
