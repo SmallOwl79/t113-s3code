@@ -425,7 +425,41 @@ uint32_t 		i;
 
 	p_cell[i] = cell;
 }
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void cmd_h_add_full_to_cell_table(	SettingCell_t *p_cell,
+								uint32_t num,
+								void *p_v,
+								void *p_func_read,
+								void *p_func_write,
+								uint32_t attr,
+								uint32_t size,
+								void *p_var,
+								uint32_t low,
+								uint32_t high,
+								const char *p_name){
+SettingCell_t 	cell;
+uint32_t 		i;
+	for(i=0;i<COMPONENT_MAX_TABLE_SIZE;i++){
+		if(!p_cell[i].CellNumber) break;
+	}
 
+	if( i>= COMPONENT_MAX_TABLE_SIZE) return;
+
+	cell.CellAttr = attr;
+	cell.CellType = FixIntegerCellType + size;
+	cell.CellNumber = num;
+	cell.VarPtr = p_var;
+	cell.ReadProc = (void*)(void*)p_func_read;
+	cell.WriteProc = (void*)(void*)p_func_write;
+	cell.LowLim = low;
+	cell.HighLim = high;
+	cell.DefaultValue = (uint32_t)p_v;
+	cell.DescriptStr = p_name;
+
+	p_cell[i] = cell;
+}
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

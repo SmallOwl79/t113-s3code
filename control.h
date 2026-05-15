@@ -17,6 +17,8 @@
 #include "lwip/ip_addr.h"
 #include "lwip/api.h"
 #include "comm.h"
+#include "receiver_worker.h"
+//#include "receiver_base.h"
 
 #ifdef	TVP_MASTER_HAVE
 #include "tvp5150_reg.h"
@@ -372,6 +374,9 @@ uint32_t	file_cntr;
 
 switch_fdc_struct			sw_adc_in;
 uint8_t					adc_time;
+
+receiver_worker_ctx_t 	receiver_0;
+receiver_worker_ctx_t 	receiver_1;
 
 }control_struct;
 

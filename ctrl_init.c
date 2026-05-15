@@ -14,6 +14,8 @@ extern uint8_t video_chroma_buf_csi[1024*1024];
 
 float goertzel_mag(uint16_t* data, int n, int k);
 
+void start_receiver_threads(control_struct *p_ctl);
+
 void CSI_DMA_IRQHandler(void);
 uint8_t reg_add_to_cell_table(SettingCell_t *p_cell, uint32_t num, control_struct *p_ctl);
 
@@ -3444,6 +3446,8 @@ volatile uint8_t err=0;
 	pos = cntrl_main_cmd_init(p_ctl,pos);
 #endif
 
+	start_receiver_threads(p_ctl);
+
 //	iommu_init();
 	csi_clk_init();
 	csi_internal_clk_init();
@@ -4362,3 +4366,56 @@ osStatus_t status;
 //
 //	return 0;
 //}
+#define REC_MSG_COUNT 16
+#define REC_MSG_SIZE  sizeof(cntrl_dev_sys_msg_que_type_s)
+#define REC_FULL_BLOCK_SIZE (((REC_MSG_SIZE + 3U) & ~3UL) + 12U)
+
+#pragma location=".ddr_data"
+static uint32_t rec0_Queue_mem[(REC_MSG_COUNT * REC_FULL_BLOCK_SIZE) / 4];
+static uint32_t rec0_Queue_cb[osRtxMessageQueueCbSize / 4];
+
+#pragma location=".ddr_data"
+static uint32_t rec1_Queue_mem[(REC_MSG_COUNT * REC_FULL_BLOCK_SIZE) / 4];
+static uint32_t rec1_Queue_cb[osRtxMessageQueueCbSize / 4];
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void start_receiver_threads(control_struct *p_ctl) {
+receiver_worker_ctx_t *p_ctx0;
+receiver_worker_ctx_t *p_ctx1;
+
+	const osMessageQueueAttr_t queue_attr0 = {
+		.name = NULL,
+		.cb_mem = rec0_Queue_cb,
+		.cb_size = sizeof(rec0_Queue_cb),
+		.mq_mem = rec0_Queue_mem,
+		.mq_size = sizeof(rec0_Queue_mem)
+	};
+
+	memset(&p_ctl->receiver_0,0,sizeof(receiver_worker_ctx_t));
+	p_ctx0 = &p_ctl->receiver_0;
+
+
+	p_ctx0->q_id = osMessageQueueNew(REC_MSG_COUNT, REC_MSG_SIZE, &queue_attr0);
+	p_ctx0->id = 0;
+	p_ctx0->evt_id = osEventFlagsNew(NULL);
+
+	p_ctx0->base.hw_set_freq = recv_1_2_set_freq_v;
+	p_ctx0->base.hw_dev_ptr = &p_ctl->recv_1_2;
+
+	p_ctx0->base.p_cfg = &cfg_sub;
+
+
+	cmd_h_add_full_to_cell_table(p_t,
+								pos++,
+								p_ctx0,
+								NULL,
+								(void*)&receiver_worker_make_ctrl_cmd_32,
+								WR_Att + RD_Att + Action_Att,
+								2,
+								_NULL,
+								КОМАНДЫ!!!,
+								0,
+								"1_2 ch Up");
+}
+
